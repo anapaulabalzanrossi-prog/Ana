@@ -20,6 +20,7 @@ const DEFAULT_STATUSES = [
   { name: 'Protocolar', color: '#4F7A4A' },
   { name: 'Aguardando cliente', color: '#86689C' },
   { name: 'Aguardando decisão', color: '#4F7C84' },
+  { name: 'Delegado', color: '#2F6F6A' },
 ];
 const DEFAULT_TYPES = ['Prazo', 'Audiência', 'Reunião', 'Petição', 'Diligência', 'Ligação', 'Outro'];
 const REMINDER_OPTS = [
@@ -1240,6 +1241,19 @@ document.body.appendChild(fab);
 // =====================================================================
 // Início
 // =====================================================================
+// Inclui status novos em quem já tinha salvado uma lista personalizada (uma vez só)
+let migrated = false;
+function migrateSettings() {
+  if (migrated) return;
+  const doc = store.get('meta', 'settings');
+  if (!doc) return; // ainda não carregou ou nunca salvou: os padrões já valem
+  migrated = true;
+  const done = doc.migrations || [];
+  if (doc.statuses?.length && !done.includes('delegado') && !doc.statuses.some((x) => x.name === 'Delegado')) {
+    store.put('meta', { ...doc, statuses: [...doc.statuses, { name: 'Delegado', color: '#2F6F6A' }], migrations: [...done, 'delegado'] });
+  }
+}
+store.subscribe(migrateSettings);
 store.subscribe(render);
 gcal.onChange(render);
 render();
