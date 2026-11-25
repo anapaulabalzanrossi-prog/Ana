@@ -1,8 +1,8 @@
 // Service worker: deixa o app abrir rápido e funcionar sem internet.
-const VERSION = 'agenda-v5';
+const VERSION = 'agenda-v7';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest',
-  'js/app.js', 'js/store.js', 'js/cloud.js', 'js/gcal.js', 'js/ink.js', 'js/utils.js', 'js/config.js',
+  'js/app.js', 'js/bridge-script.js', 'js/store.js', 'js/cloud.js', 'js/gcal.js', 'js/ink.js', 'js/utils.js', 'js/config.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

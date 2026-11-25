@@ -468,3 +468,4 @@ svg.i { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-widt
   .page-head .head-actions .btn.primary { display: none; }
   .toolbar .cal-nav .label-range { font-size: 21px; min-width: 0; }
 }
+@media (max-width: 520px) { .hide-xs { display: none; } }

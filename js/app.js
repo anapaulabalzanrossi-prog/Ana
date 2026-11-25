@@ -1,5 +1,6 @@
 import { store, initStore } from './store.js';
 import { gcal } from './gcal.js';
+import { bridgeScript } from './bridge-script.js';
 import { createInk } from './ink.js';
 import {
   uid, esc, ymd, parseYmd, addDays, addMonths, startOfWeek, todayStr, daysUntil, fmtLong, fmtDM, fmtMonth,
@@ -41,6 +42,8 @@ function settings() {
     defaultReminders: s.defaultReminders ?? [1440, 0],
     gcalShow: s.gcalShow || null,
     gcalTarget: s.gcalTarget || 'primary',
+    gcalUrl: s.gcalUrl || '',
+    gcalKey: s.gcalKey || '',
   };
 }
 const saveSettings = (patch) => store.put('meta', { ...(store.get('meta', 'settings') || {}), ...patch, id: 'settings' });
@@ -118,14 +121,17 @@ async function syncTaskToCalendar(t) {
     }
   } catch (e) {
     console.error(e);
-    if (e.code === 'nogcal') await store.put('tasks', { ...store.get('tasks', t.id), gcalPending: true });
-    else toast('Não consegui atualizar a Google Agenda');
+    const cur = store.get('tasks', t.id);
+    if (cur) await store.put('tasks', { ...cur, gcalPending: true });
+    if (e.code !== 'nogcal') toast('Sem conexão com a Google Agenda agora. Tento de novo depois.');
   }
 }
 
+let syncingPending = false;
 async function syncPendingToCalendar() {
-  if (!gcal.connected()) return;
-  for (const t of tasks().filter((x) => x.gcalPending)) await syncTaskToCalendar(t);
+  if (!gcal.connected() || syncingPending || !navigator.onLine) return;
+  syncingPending = true;
+  try { for (const t of tasks().filter((x) => x.gcalPending)) await syncTaskToCalendar(t); } finally { syncingPending = false; }
 }
 
 async function toggleTask(id) {
@@ -350,7 +356,7 @@ function viewHome() {
 
     <section class="card span-7">
       <div class="card-title">Hoje <button class="link" data-act="new-task-today">+ tarefa</button></div>
-      ${evs.length ? `<div class="list-plain" style="margin-bottom:12px">${evs.map((e) => `<div class="mini-evt" data-evt="${esc(e.id)}"><span class="tm g">${e.allDay ? 'dia' : fmtTime(new Date(e.start))}</span><span>${esc(e.title)}</span></div>`).join('')}</div>` : ''}
+      ${evs.length ? `<div class="list-plain" style="margin-bottom:12px">${evs.map((e) => `<div class="mini-evt" data-evt="${esc(e.key || e.id)}"><span class="tm g">${e.allDay ? 'dia' : fmtTime(new Date(e.start))}</span><span>${esc(e.title)}</span></div>`).join('')}</div>` : ''}
       ${late.length + todays.length ? `<div class="task-list">${[...late, ...todays].map(taskRow).join('')}</div>`
         : `<div class="empty"><span class="big">Dia livre de pendências</span>Nada vencendo hoje. Aproveite para adiantar a semana.</div>`}
     </section>
@@ -402,6 +408,7 @@ function viewTasks() {
     <div class="row1">
       <input class="input" id="qa-input" placeholder="Nova tarefa… (ex.: Contestação — Silva x Banco)" autocomplete="off" enterkeyhint="done">
       <button class="btn primary" type="submit">${icon('plus')}<span>Adicionar</span></button>
+      <button class="btn" type="button" data-act="paste-list" title="Colar várias tarefas">${icon('list')}<span class="hide-xs">Várias</span></button>
     </div>
     <div class="opts">
       <button type="button" class="chip ${qa.area === 'trabalho' ? 'on' : ''}" data-qa-area="trabalho"><span class="dot" style="background:${qa.area === 'trabalho' ? '#E3CB8F' : 'var(--wine)'}"></span>Trabalho</button>
@@ -483,8 +490,8 @@ function viewAgenda() {
   else label = cap(fmtMonth(c));
 
   let cta = '';
-  if (gcal.configured() && !gcal.connected()) {
-    cta = `<div class="gcal-cta">${icon('cal')}<span class="grow">${localStorage.getItem('gcal-consented') ? 'A conexão com a Google Agenda expirou. Toque para reconectar.' : 'Conecte sua Google Agenda para ver seus compromissos aqui e receber lembretes no celular.'}</span><button class="btn small primary" data-act="gcal-connect">Conectar</button></div>`;
+  if (!gcal.configured() && store.isCloud()) {
+    cta = `<div class="gcal-cta">${icon('cal')}<span class="grow">Ligue a Google Agenda <b>uma única vez</b> para ver seus compromissos aqui e receber lembretes no celular. Depois disso, ela fica conectada para sempre.</span><button class="btn small primary" data-act="gcal-connect">Ligar</button></div>`;
   }
 
   $view.innerHTML = `
@@ -537,7 +544,7 @@ function weekHTML() {
       return `<div class="pday ${k === today ? 'today' : ''}">
         <div class="pday-head" data-goto-day="${k}"><span class="num">${d.getDate()}</span><span class="dn">${fmtWeekday(d).replace('-feira', '')}</span><button class="add" data-new-on="${k}" aria-label="Nova tarefa">${icon('plus')}</button></div>
         <div class="pday-items">
-          ${de.map((e) => `<div class="evt g" data-evt="${esc(e.id)}"><span class="tm">${e.allDay ? '' : fmtTime(new Date(e.start))}</span><span>${esc(e.title)}</span></div>`).join('')}
+          ${de.map((e) => `<div class="evt g" data-evt="${esc(e.key || e.id)}"><span class="tm">${e.allDay ? '' : fmtTime(new Date(e.start))}</span><span>${esc(e.title)}</span></div>`).join('')}
           ${dt.map((t) => `<div class="ptask ${t.done ? 'done' : ''}" data-open-task="${t.id}">${checkBtn(t.done, 'toggle-task', t.id)}<span>${t.fatal ? '<span class="fatal-mark">⚖ </span>' : ''}${t.time ? `<b>${t.time}</b> ` : ''}${esc(t.title)}</span></div>`).join('')}
           <div class="pday-lines" data-new-on="${k}"></div>
         </div>
@@ -581,7 +588,7 @@ function dayHTML() {
   const dt = tasksOn(k);
   const H0 = 6, H1 = 23, HH = 56;
   const timed = [
-    ...evs.filter((e) => !e.allDay).map((e) => ({ kind: 'e', id: e.id, title: e.title, s: new Date(e.start), e: new Date(e.end) })),
+    ...evs.filter((e) => !e.allDay).map((e) => ({ kind: 'e', id: e.id, key: e.key, title: e.title, s: new Date(e.start), e: new Date(e.end) })),
     ...dt.filter((t) => t.time).map((t) => { const s = new Date(`${k}T${t.time}:00`); return { kind: 't', id: t.id, title: t.title, s, e: new Date(s.getTime() + 45 * 60000), area: t.area, done: t.done }; }),
   ].sort((a, b) => a.s - b.s);
   // distribui eventos sobrepostos em colunas
@@ -597,13 +604,13 @@ function dayHTML() {
   const showNow = k === todayStr() && now.getHours() >= H0 && now.getHours() <= H1;
   return `<div class="day-wrap">
     <div class="timeline">
-      ${evs.some((e) => e.allDay) ? `<div class="allday">${evs.filter((e) => e.allDay).map((e) => `<div class="evt g" data-evt="${esc(e.id)}">${esc(e.title)}</div>`).join('')}</div>` : ''}
+      ${evs.some((e) => e.allDay) ? `<div class="allday">${evs.filter((e) => e.allDay).map((e) => `<div class="evt g" data-evt="${esc(e.key || e.id)}">${esc(e.title)}</div>`).join('')}</div>` : ''}
       <div class="hours">
         ${[...Array(H1 - H0 + 1)].map((_, i) => `<div class="hour" data-new-at="${k}|${pad(H0 + i)}:00"><span class="hl">${pad(H0 + i)}:00</span></div>`).join('')}
         ${timed.map((it) => {
           const top = pos(it.s), h = Math.max(26, pos(it.e) - top - 2);
           const w = `calc((100% - 74px) / ${ncol})`;
-          const attr = it.kind === 'e' ? `data-evt="${esc(it.id)}"` : `data-open-task="${it.id}"`;
+          const attr = it.kind === 'e' ? `data-evt="${esc(it.key || it.id)}"` : `data-open-task="${it.id}"`;
           return `<div class="tblock ${it.kind === 'e' ? 'g' : it.area === 'pessoal' ? 'personal' : ''}" ${attr} style="top:${top}px;height:${h}px;left:calc(66px + ${w} * ${it.col});right:auto;width:calc(${w} - 4px);${it.done ? 'opacity:.55;text-decoration:line-through' : ''}"><div class="tm">${fmtTime(it.s)}</div>${esc(it.title)}</div>`;
         }).join('')}
         ${showNow ? `<div class="now-line" style="top:${pos(now)}px"></div>` : ''}
@@ -723,8 +730,7 @@ function openTask(id, preset) {
     if (!t.date) return '<div class="note">Defina uma data para programar lembretes.</div>';
     const chips = REMINDER_OPTS.map((o) => `<button type="button" class="chip ${(t.reminders || []).includes(o.m) ? 'on' : ''}" data-rem="${o.m}">${o.label}</button>`).join('');
     let note = '';
-    if (!gcal.configured()) note = '<div class="note warn">Para receber notificações no iPhone/iPad, configure a Google Agenda (veja o GUIA.md). Os lembretes ficam salvos e serão ativados depois.</div>';
-    else if (!gcal.connected()) note = '<div class="note warn">Google Agenda desconectada: o lembrete será criado assim que você reconectar.</div>';
+    if (!gcal.configured()) note = '<div class="note warn">Para receber notificações no celular, ligue a Google Agenda em Ajustes (uma única vez). Os lembretes ficam salvos e serão ativados depois.</div>';
     else note = `<div class="note">O lembrete vira um evento na sua Google Agenda e chega como notificação no celular${t.time ? '' : ' (sem horário, o evento é criado às 9h)'}.</div>`;
     return `<div class="rem-opts">${chips}</div>${note}`;
   };
@@ -827,6 +833,46 @@ function openTask(id, preset) {
   }
 }
 
+// ---------------- Colar várias tarefas ----------------
+function openPasteList() {
+  const s = settings();
+  let area = ui.qa.area;
+  const sh = openSheet({
+    title: 'Colar várias tarefas',
+    body: `<div class="note">Uma tarefa por linha. Para definir o status, escreva depois de uma barra: <b>Agravo Cristiano | Fazer petição</b></div>
+      <div class="seg area-pick" style="align-self:flex-start">
+        <button type="button" class="${area === 'trabalho' ? 'on' : ''}" data-v="trabalho">Trabalho</button>
+        <button type="button" class="${area === 'pessoal' ? 'on' : ''}" data-v="pessoal">Pessoal</button>
+      </div>
+      <textarea class="textarea" id="pl-text" style="min-height:260px" placeholder="Cole ou digite aqui"></textarea>
+      <div class="note" id="pl-count"></div>`,
+    foot: `<span class="grow"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pl-save">Adicionar</button>`,
+  });
+  const parse = () => sh.$('#pl-text').value.split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:[-•*▪◦]|\d+[.)]|\[\s?\])\s*/, '').trim()).filter(Boolean)
+    .map((l) => {
+      const [title, st] = l.split('|').map((x) => x.trim());
+      const found = st && s.statuses.find((x) => x.name.toLowerCase() === st.toLowerCase());
+      return { title, status: found ? found.name : (st || '') };
+    }).filter((x) => x.title);
+  const count = () => { const n = parse().length; sh.$('#pl-count').textContent = n ? `${n} tarefa${n > 1 ? 's' : ''}` : ''; };
+  sh.$('#pl-text').addEventListener('input', count);
+  sh.$$('.area-pick button').forEach((b) => b.onclick = () => { area = b.dataset.v; sh.$$('.area-pick button').forEach((x) => x.classList.toggle('on', x === b)); });
+  setTimeout(() => sh.$('#pl-text').focus(), 60);
+  sh.$('#pl-save').onclick = async () => {
+    const items = parse();
+    if (!items.length) { toast('Nenhuma tarefa na lista'); return; }
+    sh.close();
+    const base = Date.now();
+    for (const [i, it] of items.entries()) {
+      const t = newTask({ title: it.title, area, status: it.status || (area === 'trabalho' ? s.statuses[0].name : '') });
+      t.createdAt = base + i;
+      await store.put('tasks', t);
+    }
+    toast(`${items.length} tarefa${items.length > 1 ? 's adicionadas' : ' adicionada'}`);
+  };
+}
+
 // ---------------- Evento da Google Agenda ----------------
 function findEvent(id) {
   const all = [];
@@ -834,7 +880,7 @@ function findEvent(id) {
   for (const [a, b] of [[new Date(), addDays(new Date(), 1)], [startOfWeek(c), addDays(startOfWeek(c), 7)], [c, addDays(c, 1)]]) all.push(...(gcal.cachedEvents(a, b, visibleCalendars()) || []));
   const first = new Date(c.getFullYear(), c.getMonth(), 1, 12); const ms = startOfWeek(first);
   all.push(...(gcal.cachedEvents(ms, addDays(ms, 42), visibleCalendars()) || []));
-  return all.find((e) => e.id === id);
+  return all.find((e) => (e.key || e.id) === id);
 }
 
 function openEvent(id) {
@@ -845,13 +891,9 @@ function openEvent(id) {
   const sh = openSheet({
     title: esc(e.title),
     body: `<div class="section"><div>${icon('clock')} <span>${cap(when)}</span></div>${e.location ? `<div>📍 ${esc(e.location)}</div>` : ''}${e.description ? `<div class="note" style="white-space:pre-wrap">${esc(e.description.replace(/<[^>]+>/g, ''))}</div>` : ''}</div>`,
-    foot: `<button class="btn danger" id="e-del">${icon('trash')}</button><span class="grow"></span>${e.link ? `<a class="btn" href="${esc(e.link)}" target="_blank" rel="noopener">${icon('ext')} Abrir no Google</a>` : ''}<button class="btn primary" id="e-task">Criar tarefa</button>`,
+    foot: `<span class="note grow">Para editar ou excluir, use a Google Agenda.</span><button class="btn primary" id="e-task">Criar tarefa</button>`,
   });
   sh.$('#e-task').onclick = () => { sh.close(); openTask(null, { title: e.title, date: e.date, time: e.allDay ? null : fmtTime(s) }); };
-  sh.$('#e-del').onclick = async () => {
-    if (!confirm('Excluir este compromisso da Google Agenda?')) return;
-    try { await gcal.deleteEvent(e.calId, e.id); inflight.clear(); sh.close(); toast('Compromisso excluído'); render(); } catch (err) { toast(err.message); }
-  };
 }
 
 function openNewEvent(date = ymd(ui.cursor), time = '') {
@@ -1009,9 +1051,8 @@ function openSettings() {
   else account = `<div class="toggle-row"><div><div class="t">Entrar para sincronizar</div><div class="d">Use a mesma conta Google no iPhone, iPad e Mac</div></div><button class="btn small primary" id="s-login">Entrar com Google</button></div>`;
 
   let cal;
-  if (!gcal.configured()) cal = `<div class="note warn">Google Agenda ainda não configurada. Siga o GUIA.md (passo 3).</div>`;
-  else if (!gcal.connected()) cal = `<div class="toggle-row"><div><div class="t">Google Agenda</div><div class="d">Ver compromissos e receber lembretes</div></div><button class="btn small primary" id="s-gcal">Conectar</button></div>`;
-  else cal = `<div class="toggle-row"><div><div class="t">Google Agenda conectada</div><div class="d">Escolha quais agendas aparecem no app</div></div><button class="btn small" id="s-gcal-off">Desconectar</button></div>
+  if (!gcal.configured()) cal = `<div class="toggle-row"><div><div class="t">Google Agenda</div><div class="d">Configure uma única vez e ela fica conectada para sempre, em todos os aparelhos</div></div><button class="btn small primary" id="s-gcal">Ligar</button></div>`;
+  else cal = `<div class="toggle-row"><div><div class="t">Google Agenda conectada</div><div class="d">Fica conectada sempre. Escolha quais agendas aparecem no app</div></div><button class="btn small" id="s-gcal-off">Desligar</button></div>
       ${cals.map((c) => `<label class="toggle-row" style="padding:4px 0"><span style="display:flex;gap:8px;align-items:center"><span class="dot" style="width:10px;height:10px;border-radius:50%;background:${c.color}"></span>${esc(c.name)}</span><span class="switch"><input type="checkbox" data-cal-show="${esc(c.id)}" ${show.includes(c.id) ? 'checked' : ''}><span></span></span></label>`).join('')}
       <div class="field"><label>Agenda para lembretes das tarefas</label><select class="select" id="s-target">${cals.filter((c) => c.writable).map((c) => `<option value="${esc(c.id)}" ${(c.id === s.gcalTarget || (s.gcalTarget === 'primary' && c.primary)) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>`;
 
@@ -1038,8 +1079,11 @@ function openSettings() {
 
   sh.$('#s-login')?.addEventListener('click', async () => { try { await store.signIn(); sh.close(); } catch (e) { toast('Não foi possível entrar: ' + e.message); } });
   sh.$('#s-logout')?.addEventListener('click', async () => { if (confirm('Sair da conta? Os dados continuam salvos na nuvem.')) { await store.signOut(); sh.close(); } });
-  sh.$('#s-gcal')?.addEventListener('click', async () => { sh.close(); await connectGcal(); openSettings(); });
-  sh.$('#s-gcal-off')?.addEventListener('click', () => { gcal.disconnect(); sh.close(); render(); });
+  sh.$('#s-gcal')?.addEventListener('click', () => { sh.close(); openGcalSetup(); });
+  sh.$('#s-gcal-off')?.addEventListener('click', async () => {
+    if (!confirm('Desligar a Google Agenda do app? Os eventos já criados continuam na sua agenda.')) return;
+    await saveSettings({ gcalUrl: '', gcalKey: '' }); sh.close();
+  });
   sh.$('#s-export').onclick = () => {
     const blob = new Blob([store.exportJSON()], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `minha-agenda-backup-${todayStr()}.json`; a.click();
@@ -1068,15 +1112,60 @@ function openSettings() {
   };
 }
 
-async function connectGcal() {
-  try {
-    await gcal.connect(store.user()?.email);
-    await refreshCalendars();
-    inflight.clear();
-    toast('Google Agenda conectada');
-    syncPendingToCalendar();
-    render();
-  } catch (e) { toast(e.message); }
+// Configuração única do conector da Google Agenda
+function openGcalSetup() {
+  let key = '';
+  try { key = localStorage.getItem('gcal-draft-key') || ''; } catch { /* */ }
+  if (!key) {
+    const b = new Uint8Array(18); crypto.getRandomValues(b);
+    key = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem('gcal-draft-key', key); } catch { /* */ }
+  }
+  const code = bridgeScript(key);
+  const step = (n, html) => `<div class="row" style="gap:12px;align-items:flex-start"><span style="flex:0 0 28px;height:28px;border-radius:50%;background:var(--wine);color:#FFF4E4;display:grid;place-items:center;font-weight:700;font-size:14px">${n}</span><div style="flex:1">${html}</div></div>`;
+  const sh = openSheet({
+    title: 'Ligar a Google Agenda',
+    body: `<div class="note">Feito uma única vez, de preferência no Mac. Depois disso a agenda fica conectada para sempre, em todos os seus aparelhos.</div>
+      <div class="section">
+        ${step(1, `<b>Copie o código do conector.</b><div class="row mt8" style="flex-wrap:wrap"><button class="btn primary" id="g-copy" style="flex:0 0 auto">Copiar código</button></div><textarea class="textarea mt8" id="g-code" readonly style="min-height:80px;font-family:ui-monospace,monospace;font-size:12px">${esc(code)}</textarea>`)}
+        ${step(2, `<b>Abra o Google Apps Script</b> e crie um projeto: <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a>. Apague o que estiver escrito, cole o código e clique no ícone de <b>salvar</b>.`)}
+        ${step(3, `Clique em <b>Implantar → Nova implantação</b>. Na engrenagem, escolha <b>App da Web</b>. Em "Executar como", deixe <b>Eu</b>; em "Quem pode acessar", escolha <b>Qualquer pessoa</b>. Clique em <b>Implantar</b>.`)}
+        ${step(4, `Clique em <b>Autorizar acesso</b> e escolha sua conta. No aviso "O Google não verificou este app", clique em <b>Avançado → Acessar (não seguro)</b> e depois em <b>Permitir</b>. O app é seu, por isso o aviso.`)}
+        ${step(5, `<b>Copie o "URL do app da Web"</b> (começa com https://script.google.com/macros/s/...) e cole aqui:<input class="input mt8" id="g-url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">`)}
+      </div>`,
+    foot: `<span class="grow"></span><button class="btn" data-close>Fechar</button><button class="btn primary" id="g-save">Testar e salvar</button>`,
+  });
+  sh.$('#g-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(code); toast('Código copiado'); }
+    catch { const ta = sh.$('#g-code'); ta.focus(); ta.select(); toast('Selecione e copie o código'); }
+  };
+  sh.$('#g-save').onclick = async () => {
+    const url = sh.$('#g-url').value.trim();
+    if (!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) { toast('Cole o URL do app da Web (passo 5)'); return; }
+    const btn = sh.$('#g-save'); btn.disabled = true; btn.textContent = 'Testando…';
+    try {
+      await gcal.ping(url, key);
+      await saveSettings({ gcalUrl: url, gcalKey: key });
+      try { localStorage.removeItem('gcal-draft-key'); } catch { /* */ }
+      sh.close();
+      toast('Google Agenda conectada para sempre');
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Testar e salvar';
+      toast(e.message || 'Não consegui falar com o conector');
+    }
+  };
+}
+
+// Mantém o conector configurado em todos os aparelhos (vem das configurações sincronizadas)
+let lastBridge = '';
+function applyBridgeConfig() {
+  const s = settings();
+  const sig = `${s.gcalUrl}|${s.gcalKey}`;
+  if (sig === lastBridge) return;
+  lastBridge = sig;
+  gcal.configure({ url: s.gcalUrl, key: s.gcalKey });
+  inflight.clear();
+  if (gcal.configured()) refreshCalendars().then(() => { inflight.clear(); render(); syncPendingToCalendar(); });
 }
 
 // =====================================================================
@@ -1110,7 +1199,7 @@ document.addEventListener('click', async (e) => {
       'go-week': () => { ui.agendaMode = 'week'; ui.cursor = new Date(); go('agenda'); },
       'qa-fatal': () => { ui.qa.fatal = !ui.qa.fatal; render(); },
       'toggle-done': () => { ui.showDone = !ui.showDone; partial ? partial() : render(); },
-      'gcal-connect': connectGcal,
+      'gcal-connect': openGcalSetup,
       'week-prio-check': async () => {
         const wid = x.dataset.week; const i = +x.dataset.i;
         const wk = store.get('weeks', wid) || { id: wid, priorities: [], notes: '' };
@@ -1118,6 +1207,7 @@ document.addEventListener('click', async (e) => {
         pr[i] = { ...pr[i], done: !pr[i].done };
         await store.put('weeks', { ...wk, priorities: pr });
       },
+      'paste-list': () => openPasteList(),
       'new-ink': () => openInk(null),
       'new-wish': () => openWish(null),
     };
@@ -1254,18 +1344,20 @@ function migrateSettings() {
   }
 }
 store.subscribe(migrateSettings);
+store.subscribe(applyBridgeConfig);
 store.subscribe(render);
 gcal.onChange(render);
 render();
 initStore(() => render()).then(() => {
   render();
-  if (gcal.connected()) { refreshCalendars().then(render); syncPendingToCalendar(); }
+  applyBridgeConfig();
+  syncPendingToCalendar();
 });
 
 // Atualiza a tela quando o dia vira ou o app volta ao primeiro plano
 let lastDay = todayStr();
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { if (todayStr() !== lastDay) { lastDay = todayStr(); ui.cursor = new Date(); } inflight.clear(); render(); }
+  if (document.visibilityState === 'visible') { if (todayStr() !== lastDay) { lastDay = todayStr(); ui.cursor = new Date(); } inflight.clear(); render(); syncPendingToCalendar(); }
 });
 setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render(); } }, 60000);
 

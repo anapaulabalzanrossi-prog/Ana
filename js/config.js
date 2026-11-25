@@ -25,6 +25,6 @@ export const FIREBASE_CONFIG = {
 };
 */
 
-// 2) Google Agenda (ver compromissos e receber notificações no celular)
-//    ID do cliente OAuth do tipo "Aplicativo da Web" (termina em .apps.googleusercontent.com)
+// 2) Não é mais usado: a Google Agenda agora conecta por um conector configurado
+//    dentro do app (Ajustes → Google Agenda), que não expira.
 export const GOOGLE_CLIENT_ID = "1016054799003-2nkmcedek906s1m3uqartritvdggfq7c.apps.googleusercontent.com";
