@@ -27,4 +27,4 @@ export const FIREBASE_CONFIG = {
 
 // 2) Google Agenda (ver compromissos e receber notificações no celular)
 //    ID do cliente OAuth do tipo "Aplicativo da Web" (termina em .apps.googleusercontent.com)
-export const GOOGLE_CLIENT_ID = "";
+export const GOOGLE_CLIENT_ID = "1016054799003-2nkmcedek906s1m3uqartritvdggfq7c.apps.googleusercontent.com";
