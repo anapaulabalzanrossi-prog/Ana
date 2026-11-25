@@ -6,7 +6,14 @@
 
 // 1) Firebase (login com Google + sincronização entre iPhone, iPad e Mac)
 //    Cole aqui o objeto "firebaseConfig" que o Firebase mostra ao criar o app Web.
-export const FIREBASE_CONFIG = null;
+export const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDBhMiJe06oaReNdeHZEJiRIzYMxwXRAzE",
+  authDomain: "minha-agenda-329d9.firebaseapp.com",
+  projectId: "minha-agenda-329d9",
+  storageBucket: "minha-agenda-329d9.firebasestorage.app",
+  messagingSenderId: "1016054799003",
+  appId: "1:1016054799003:web:6c7ed17be7335e1c40843e"
+};
 /* Exemplo:
 export const FIREBASE_CONFIG = {
   apiKey: "AIza...",
