@@ -300,7 +300,7 @@ function datePill(t) {
 function taskRow(t) {
   const cl = t.checklist || [];
   const clDone = cl.filter((c) => c.done).length;
-  return `<div class="task ${t.area === 'trabalho' ? 'work' : 'personal'} ${t.done ? 'done' : ''}" data-open-task="${t.id}">
+  return `<div class="task ${t.area === 'trabalho' ? 'work' : 'personal'} ${t.done ? 'done' : ''}" data-open-task="${t.id}" data-swipe="${t.id}"><div class="task-inner">
     ${checkBtn(t.done, 'toggle-task', t.id)}
     <div class="task-body">
       <div class="task-title">${esc(t.title)}${t.priority ? ` <span class="prio">${'!'.repeat(t.priority)}</span>` : ''}</div>
@@ -314,7 +314,7 @@ function taskRow(t) {
         ${t.gcalEventId && t.reminders?.length && !t.done ? `<span class="mi" title="Lembrete na Google Agenda">${icon('bell')}</span>` : ''}
       </div>
     </div>
-  </div>`;
+  </div></div>`;
 }
 
 const areaChips = (cur, attr = 'data-area') => `<div class="chips">
@@ -1197,7 +1197,56 @@ function applyBridgeConfig() {
 // =====================================================================
 // Eventos (delegação)
 // =====================================================================
+// Deslizar a tarefa para a esquerda exclui (com opção de desfazer)
+let swipe = null;
+let suppressClickUntil = 0;
+document.addEventListener('touchstart', (e) => {
+  const row = e.target.closest('[data-swipe]');
+  if (!row || e.touches.length > 1 || e.target.closest('select')) { swipe = null; return; }
+  const t = e.touches[0];
+  swipe = { row, inner: row.querySelector('.task-inner'), x: t.clientX, y: t.clientY, dx: 0, locked: null };
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!swipe) return;
+  const t = e.touches[0];
+  const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  if (swipe.locked === null) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    swipe.locked = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+    if (swipe.locked === 'x') { swipe.row.classList.add('swiping'); swipe.inner.style.transition = 'none'; }
+  }
+  if (swipe.locked !== 'x') return;
+  e.preventDefault();
+  swipe.dx = Math.min(0, dx);
+  swipe.inner.style.transform = `translateX(${swipe.dx}px)`;
+  swipe.row.classList.toggle('swipe-armed', swipe.dx < -swipe.row.offsetWidth * 0.35);
+}, { passive: false });
+document.addEventListener('touchend', () => {
+  if (!swipe) return;
+  const { row, inner, dx, locked } = swipe;
+  swipe = null;
+  if (locked !== 'x') return;
+  suppressClickUntil = Date.now() + 400;
+  inner.style.transition = '';
+  if (dx < -row.offsetWidth * 0.35) {
+    inner.style.transform = 'translateX(-100%)';
+    row.style.maxHeight = row.offsetHeight + 'px';
+    requestAnimationFrame(() => row.classList.add('swipe-gone'));
+    setTimeout(() => deleteTask(row.dataset.swipe), 220);
+  } else {
+    inner.style.transform = '';
+    setTimeout(() => row.classList.remove('swiping', 'swipe-armed'), 200);
+  }
+});
+document.addEventListener('touchcancel', () => {
+  if (!swipe) return;
+  swipe.inner.style.transition = ''; swipe.inner.style.transform = '';
+  swipe.row.classList.remove('swiping', 'swipe-armed');
+  swipe = null;
+});
+
 document.addEventListener('click', async (e) => {
+  if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
   if (e.target.closest('#sheet-root')) return;
   if (e.target.closest('select, [data-stop]')) return;
   const el = (sel) => e.target.closest(sel);
