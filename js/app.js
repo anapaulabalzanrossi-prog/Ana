@@ -264,6 +264,10 @@ function renderChrome() {
 
 function renderBanner() {
   const el = document.getElementById('banner');
+  if (store.cloudAvailable() && store.authKnown() && !store.user()) {
+    el.innerHTML = `<div class="banner">${icon('cloud')}<span class="grow"><b>Este aparelho não está sincronizado.</b> O que você fizer aqui não aparece nos outros aparelhos.</span><button data-act="login">Entrar com Google</button></div>`;
+    return;
+  }
   const dismissed = localStorage.getItem('banner-dismissed') === todayStr();
   const urgent = pending().filter((t) => t.fatal && t.date && daysUntil(t.date) <= 1).sort(sortTasks);
   if (!urgent.length || dismissed) { el.innerHTML = ''; return; }
@@ -1240,7 +1244,7 @@ function openGcalSetup() {
   const step = (n, html) => `<div class="row" style="gap:12px;align-items:flex-start"><span style="flex:0 0 28px;height:28px;border-radius:50%;background:var(--wine);color:#FFF4E4;display:grid;place-items:center;font-weight:700;font-size:14px">${n}</span><div style="flex:1">${html}</div></div>`;
   const sh = openSheet({
     title: 'Ligar a Google Agenda',
-    body: `<div class="note">Feito uma única vez, de preferência no Mac. Depois disso a agenda fica conectada para sempre, em todos os seus aparelhos.</div>
+    body: `${store.cloudAvailable() && !store.user() ? '<div class="note warn"><b>Entre com Google antes</b> (Ajustes → Entrar com Google). Sem isso, a agenda fica ligada só neste aparelho.</div>' : ''}<div class="note">Feito uma única vez, de preferência no Mac. Depois disso a agenda fica conectada para sempre, em todos os seus aparelhos.</div>
       <div class="section">
         ${step(1, `<b>Copie o código do conector.</b><div class="row mt8" style="flex-wrap:wrap"><button class="btn primary" id="g-copy" style="flex:0 0 auto">Copiar código</button></div><textarea class="textarea mt8" id="g-code" readonly style="min-height:80px;font-family:ui-monospace,monospace;font-size:12px">${esc(code)}</textarea>`)}
         ${step(2, `<b>Abra o Google Apps Script</b> e crie um projeto: <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a>. Apague o que estiver escrito, cole o código e clique no ícone de <b>salvar</b>.`)}
@@ -1347,6 +1351,7 @@ document.addEventListener('click', async (e) => {
     const A = {
       'toggle-task': () => toggleTask(x.dataset.id),
       settings: openSettings,
+      login: async () => { try { await store.signIn(); } catch (err) { toast('Não foi possível entrar: ' + err.message); } },
       'dismiss-banner': () => { localStorage.setItem('banner-dismissed', todayStr()); renderBanner(); },
       'new-task-today': () => openTask(null, { date: todayStr() }),
       'new-task-cursor': () => openTask(null, { date: ymd(ui.cursor) }),

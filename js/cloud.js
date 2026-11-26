@@ -55,7 +55,7 @@ export async function bulkPut(data) {
   for (const [col, docs] of Object.entries(data)) {
     if (!Array.isArray(docs)) continue;
     for (const d of docs) {
-      batch.set(F.doc(colRef(col), d.id), clean(d));
+      batch.set(F.doc(colRef(col), d.id), clean(d), col === 'meta' ? { merge: true } : undefined);
       if (++n % 400 === 0) { await batch.commit(); batch = F.writeBatch(fs); }
     }
   }

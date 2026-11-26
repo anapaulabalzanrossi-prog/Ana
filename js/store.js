@@ -8,11 +8,13 @@ const state = Object.fromEntries(COLLECTIONS.map((c) => [c, new Map()]));
 const listeners = new Set();
 let cloud = null;          // módulo cloud.js quando ativo
 let cloudUser = null;
+let authKnown = false;
 let notifyQueued = false;
 const readyCols = new Set();
 
 export const store = {
   user: () => cloudUser,
+  authKnown: () => authKnown,
   cloudAvailable: () => !!FIREBASE_CONFIG,
   isCloud: () => !!(cloud && cloudUser),
   /** true quando a coleção já veio completa (do servidor, se logada) */
@@ -107,6 +109,7 @@ export async function initStore(onAuthChange) {
     await cloud.init(FIREBASE_CONFIG, {
       onUser: async (user) => {
         cloudUser = user;
+        authKnown = true;
         if (user) {
           // Primeiro login: leva para a nuvem o que já estava salvo neste aparelho
           const local = Object.fromEntries(await Promise.all(COLLECTIONS.map(async (c) => [c, await idbAll(c).catch(() => [])])));
