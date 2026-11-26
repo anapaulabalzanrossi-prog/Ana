@@ -863,7 +863,7 @@ function openPasteList() {
   let area = ui.qa.area;
   const sh = openSheet({
     title: 'Colar várias tarefas',
-    body: `<div class="note">Uma tarefa por linha. Para definir o status, escreva depois de uma barra: <b>Agravo Cristiano | Fazer petição</b></div>
+    body: `<div class="note">Uma tarefa por linha. Depois do nome, separe com barras, nesta ordem (todas opcionais):<br><b>Tarefa | Status | Cliente | Tipo | Data</b><br>Ex.: <b>Agravo | Fazer petição | Cristiano | Petição | 05/12</b><br>Se a tarefa já existir com o mesmo nome, ela é <b>atualizada</b> em vez de repetida.</div>
       <div class="seg area-pick" style="align-self:flex-start">
         <button type="button" class="${area === 'trabalho' ? 'on' : ''}" data-v="trabalho">Trabalho</button>
         <button type="button" class="${area === 'pessoal' ? 'on' : ''}" data-v="pessoal">Pessoal</button>
@@ -872,14 +872,33 @@ function openPasteList() {
       <div class="note" id="pl-count"></div>`,
     foot: `<span class="grow"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pl-save">Adicionar</button>`,
   });
+  const parseDate = (v) => {
+    const m = (v || '').match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+    if (!m) return null;
+    const now = new Date();
+    let y = m[3] ? Number(m[3].length === 2 ? '20' + m[3] : m[3]) : now.getFullYear();
+    const d = new Date(y, Number(m[2]) - 1, Number(m[1]), 12);
+    if (!m[3] && daysUntil(ymd(d)) < -60) d.setFullYear(y + 1);
+    return ymd(d);
+  };
   const parse = () => sh.$('#pl-text').value.split(/\r?\n/)
     .map((l) => l.replace(/^\s*(?:[-•*▪◦]|\d+[.)]|\[\s?\])\s*/, '').trim()).filter(Boolean)
     .map((l) => {
-      const [title, st] = l.split('|').map((x) => x.trim());
+      const [title, st, client, type, date] = l.split('|').map((x) => x.trim());
       const found = st && s.statuses.find((x) => x.name.toLowerCase() === st.toLowerCase());
-      return { title, status: found ? found.name : (st || '') };
+      const ty = type && s.types.find((x) => x.toLowerCase() === type.toLowerCase());
+      return { title, status: found ? found.name : (st || ''), client: client || '', type: ty || type || '', date: parseDate(date) };
     }).filter((x) => x.title);
-  const count = () => { const n = parse().length; sh.$('#pl-count').textContent = n ? `${n} tarefa${n > 1 ? 's' : ''}` : ''; };
+  const existing = () => {
+    const m = new Map();
+    for (const t of tasks()) if (!t.done) m.set(normTitle(t.title), t);
+    return m;
+  };
+  const count = () => {
+    const items = parse(); const ex = existing();
+    const upd = items.filter((it) => ex.has(normTitle(it.title))).length;
+    sh.$('#pl-count').textContent = items.length ? `${items.length - upd} nova${items.length - upd === 1 ? '' : 's'} · ${upd} atualizada${upd === 1 ? '' : 's'}` : '';
+  };
   sh.$('#pl-text').addEventListener('input', count);
   sh.$$('.area-pick button').forEach((b) => b.onclick = () => { area = b.dataset.v; sh.$$('.area-pick button').forEach((x) => x.classList.toggle('on', x === b)); });
   setTimeout(() => sh.$('#pl-text').focus(), 60);
@@ -887,13 +906,30 @@ function openPasteList() {
     const items = parse();
     if (!items.length) { toast('Nenhuma tarefa na lista'); return; }
     sh.close();
+    const ex = existing();
     const base = Date.now();
+    let added = 0, updated = 0;
     for (const [i, it] of items.entries()) {
-      const t = newTask({ title: it.title, area, status: it.status || (area === 'trabalho' ? s.statuses[0].name : '') });
-      t.createdAt = base + i;
-      await store.put('tasks', t);
+      const cur = ex.get(normTitle(it.title));
+      if (cur) {
+        const t = { ...cur, title: it.title, area };
+        if (it.status) t.status = it.status;
+        if (it.client) t.client = it.client;
+        if (it.type) t.type = it.type;
+        if (it.date && it.date !== cur.date) { t.date = it.date; if (!(t.reminders || []).length) t.reminders = defaultReminders(t); }
+        await store.put('tasks', t);
+        if (t.date !== cur.date) syncTaskToCalendar(t);
+        updated++;
+      } else {
+        const t = newTask({ title: it.title, area, status: it.status || (area === 'trabalho' ? s.statuses[0].name : ''), client: it.client, type: it.type, date: it.date });
+        t.createdAt = base + i;
+        await store.put('tasks', t);
+        if (t.date) syncTaskToCalendar(t);
+        ex.set(normTitle(t.title), t);
+        added++;
+      }
     }
-    toast(`${items.length} tarefa${items.length > 1 ? 's adicionadas' : ' adicionada'}`);
+    toast([added && `${added} adicionada${added > 1 ? 's' : ''}`, updated && `${updated} atualizada${updated > 1 ? 's' : ''}`].filter(Boolean).join(' · '));
   };
 }
 
