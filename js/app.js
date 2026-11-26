@@ -58,6 +58,7 @@ const ui = {
   area: saved.area || 'all',
   statusFilter: '',
   taskMode: saved.taskMode || 'list',
+  groupBy: saved.groupBy || 'date',
   search: '',
   showDone: false,
   agendaMode: saved.agendaMode || 'week',
@@ -67,7 +68,7 @@ const ui = {
   wishCat: '',
   qa: { area: saved.qaArea || 'trabalho', date: null, fatal: false },
 };
-const persistUi = () => { try { localStorage.setItem('ui', JSON.stringify({ view: ui.view, area: ui.area, taskMode: ui.taskMode, agendaMode: ui.agendaMode, qaArea: ui.qa.area })); } catch { /* ok */ } };
+const persistUi = () => { try { localStorage.setItem('ui', JSON.stringify({ view: ui.view, area: ui.area, taskMode: ui.taskMode, groupBy: ui.groupBy, agendaMode: ui.agendaMode, qaArea: ui.qa.area })); } catch { /* ok */ } };
 
 const $view = document.getElementById('view');
 let partial = null;       // função que atualiza só a lista (durante digitação)
@@ -81,12 +82,18 @@ const pending = () => tasks().filter((t) => !t.done);
 const isLate = (t) => !t.done && t.date && daysUntil(t.date) < 0;
 const isToday = (t) => t.date === todayStr();
 
+function statusIndex(t) {
+  const i = settings().statuses.findIndex((s) => s.name === t.status);
+  return i < 0 ? 999 : i;
+}
 function sortTasks(a, b) {
   return (a.date || '9999').localeCompare(b.date || '9999')
     || (b.fatal ? 1 : 0) - (a.fatal ? 1 : 0)
     || (a.time || '99').localeCompare(b.time || '99')
     || (b.priority || 0) - (a.priority || 0)
-    || (a.createdAt || 0) - (b.createdAt || 0);
+    || (a.area === b.area ? 0 : a.area === 'trabalho' ? -1 : 1)
+    || statusIndex(a) - statusIndex(b)
+    || (a.title || '').localeCompare(b.title || '', 'pt-BR');
 }
 
 function filteredTasks() {
@@ -430,6 +437,7 @@ function viewTasks() {
         ${s.statuses.map((x) => `<option ${x.name === ui.statusFilter ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
       </select>
     </div>
+    ${ui.taskMode === 'list' ? `<div class="seg" title="Agrupar por"><button class="${ui.groupBy === 'date' ? 'on' : ''}" data-groupby="date">Data</button><button class="${ui.groupBy === 'status' ? 'on' : ''}" data-groupby="status">Status</button><button class="${ui.groupBy === 'client' ? 'on' : ''}" data-groupby="client">Cliente</button></div>` : ''}
     <label class="search">${icon('search')}<input class="input" id="task-search" type="search" placeholder="Buscar cliente, processo…" value="${esc(ui.search)}"></label>
   </div>
   <div id="task-results"></div>`;
@@ -445,18 +453,34 @@ function taskListHTML() {
   const done = list.filter((t) => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
   const in7 = ymd(addDays(new Date(), 7));
   const tomorrow = ymd(addDays(new Date(), 1));
-  const groups = [
+  let groups;
+  if (ui.groupBy === 'status') {
+    const sts = settings().statuses;
+    groups = [
+      ...sts.map((st) => ({ k: st.name, color: st.color, items: open.filter((t) => t.status === st.name) })),
+      { k: 'Sem status', items: open.filter((t) => !sts.some((st) => st.name === t.status)) },
+    ].filter((g) => g.items.length);
+  } else if (ui.groupBy === 'client') {
+    const by = new Map();
+    for (const t of open) {
+      const k = t.area === 'pessoal' ? '~Pessoal' : (t.client || '').trim() || '~Sem cliente';
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+    }
+    groups = [...by.entries()].sort((a, b) => a[0].localeCompare(b[0], 'pt-BR')).map(([k, items]) => ({ k: k.replace(/^~/, ''), items }));
+  } else groups = [
     { k: 'Atrasadas', cls: 'late', items: open.filter(isLate) },
     { k: 'Hoje', items: open.filter(isToday) },
     { k: 'Amanhã', items: open.filter((t) => t.date === tomorrow) },
     { k: 'Próximos 7 dias', items: open.filter((t) => t.date > tomorrow && t.date <= in7) },
     { k: 'Mais adiante', items: open.filter((t) => t.date > in7) },
-    { k: 'Sem data', items: open.filter((t) => !t.date) },
+    { k: 'Sem data · trabalho', items: open.filter((t) => !t.date && t.area === 'trabalho') },
+    { k: 'Sem data · pessoal', items: open.filter((t) => !t.date && t.area !== 'trabalho') },
   ].filter((g) => g.items.length);
   if (!open.length && !done.length) {
     return `<div class="card empty"><span class="big">${ui.search || ui.statusFilter ? 'Nada encontrado' : 'Tudo em ordem'}</span>${ui.search || ui.statusFilter ? 'Tente outro filtro.' : 'Use o campo acima para anotar a primeira tarefa.'}</div>`;
   }
-  return groups.map((g) => `<div class="group"><div class="group-head ${g.cls || ''}">${g.k}<span class="n">${g.items.length}</span></div><div class="task-list">${g.items.map(taskRow).join('')}</div></div>`).join('')
+  return groups.map((g) => `<div class="group"><div class="group-head ${g.cls || ''}">${g.color ? `<span style="width:9px;height:9px;border-radius:50%;background:${g.color}"></span>` : ''}${esc(g.k)}<span class="n">${g.items.length}</span></div><div class="task-list">${g.items.map(taskRow).join('')}</div></div>`).join('')
     + (done.length ? `<div class="group"><div class="group-head">Concluídas<span class="n">${done.length}</span><button data-act="toggle-done">${ui.showDone ? 'Ocultar' : 'Mostrar'}</button></div>${ui.showDone ? `<div class="task-list">${done.slice(0, 50).map(taskRow).join('')}</div>` : ''}</div>` : '');
 }
 
@@ -1066,6 +1090,7 @@ function openSettings() {
       <div class="section"><div class="section-title">Você</div><div class="field"><label>Como quer ser chamada</label><input class="input" id="s-name" value="${esc(s.name)}" placeholder="Ana"></div></div>
       <div class="section"><div class="section-title">Status das tarefas</div><div class="status-edit" id="st-box">${stHTML()}</div><button class="btn small ghost" style="align-self:flex-start;color:var(--gold)" id="st-add">${icon('plus')} Novo status</button></div>
       <div class="section"><div class="section-title">Tipos de tarefa de trabalho</div><input class="input" id="s-types" value="${esc(s.types.join(', '))}"><div class="note">Separe por vírgula.</div></div>
+      <div class="section"><div class="section-title">Organização</div><div class="row"><button class="btn" id="s-dedupe" style="flex:0 0 auto">Remover tarefas repetidas</button></div></div>
       <div class="section"><div class="section-title">Backup</div><div class="row"><button class="btn" id="s-export">${icon('download')} Exportar</button><label class="btn">${icon('upload')} Importar<input type="file" accept="application/json" id="s-import" hidden></label></div><div class="note">Guarde uma cópia de segurança de vez em quando (ex.: no Google Drive).</div></div>
       <div class="section"><div class="section-title">Instalar como app</div><div class="note">No iPad ou iPhone: abra no Safari, toque em Compartilhar e depois em "Adicionar à Tela de Início". No Mac (Safari): menu Arquivo → "Adicionar ao Dock".</div></div>`,
     foot: `<span class="grow"></span><button class="btn primary" id="s-save">Salvar</button>`,
@@ -1084,6 +1109,7 @@ function openSettings() {
     if (!confirm('Desligar a Google Agenda do app? Os eventos já criados continuam na sua agenda.')) return;
     await saveSettings({ gcalUrl: '', gcalKey: '' }); sh.close();
   });
+  sh.$('#s-dedupe').onclick = () => { sh.close(); removeDuplicates(); };
   sh.$('#s-export').onclick = () => {
     const blob = new Blob([store.exportJSON()], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `minha-agenda-backup-${todayStr()}.json`; a.click();
@@ -1220,6 +1246,7 @@ document.addEventListener('click', async (e) => {
   if ((x = el('[data-new-in-status]'))) return openTask(null, { status: x.dataset.newInStatus, area: 'trabalho' });
   if ((x = el('[data-goto-day]'))) { ui.cursor = parseYmd(x.dataset.gotoDay); ui.agendaMode = 'day'; viewAgenda._scrolled = false; persistUi(); return render(); }
   if ((x = el('[data-area]'))) { ui.area = x.dataset.area; persistUi(); return render(); }
+  if ((x = el('[data-groupby]'))) { ui.groupBy = x.dataset.groupby; persistUi(); return render(); }
   if ((x = el('[data-taskmode]'))) { ui.taskMode = x.dataset.taskmode; persistUi(); return render(); }
   if ((x = el('[data-status-filter]'))) { ui.statusFilter = x.dataset.statusFilter; ui.area = 'all'; return go('tasks'); }
   if ((x = el('[data-qa-area]'))) { ui.qa.area = x.dataset.qaArea; persistUi(); return render(); }
@@ -1343,6 +1370,62 @@ function migrateSettings() {
     store.put('meta', { ...doc, statuses: [...doc.statuses, { name: 'Delegado', color: '#2F6F6A' }], migrations: [...done, 'delegado'] });
   }
 }
+// Remove tarefas repetidas (mesmo título e área), mantendo a mais completa
+const normTitle = (t) => (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/[–—-]/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function taskScore(t) {
+  return (t.gcalEventId ? 8 : 0) + (t.date ? 4 : 0) + (t.fatal ? 2 : 0) + ((t.notes || '').trim() ? 1 : 0)
+    + ((t.checklist || []).length ? 1 : 0) + (t.client ? 1 : 0) + (t.process ? 1 : 0);
+}
+async function removeDuplicates({ silent } = {}) {
+  const groups = new Map();
+  for (const t of tasks()) {
+    if (t.done) continue;
+    const k = `${t.area}|${normTitle(t.title)}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const removed = [];
+  const merged = [];
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => taskScore(b) - taskScore(a) || (b.updatedAt || 0) - (a.updatedAt || 0));
+    const keep = { ...list[0] };
+    const newest = [...list].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+    for (const t of list.slice(1)) {
+      removed.push(t);
+      for (const f of ['notes', 'client', 'process', 'type', 'date', 'time']) if (!keep[f] && t[f]) keep[f] = t[f];
+      if (!(keep.checklist || []).length && (t.checklist || []).length) keep.checklist = t.checklist;
+      keep.priority = Math.max(keep.priority || 0, t.priority || 0);
+      keep.fatal = keep.fatal || t.fatal;
+    }
+    if (newest.status) keep.status = newest.status;
+    merged.push(keep);
+  }
+  const before = merged.map((m) => ({ ...store.get('tasks', m.id) }));
+  for (const m of merged) await store.put('tasks', m);
+  for (const t of removed) {
+    await store.remove('tasks', t.id);
+    if (t.gcalEventId && gcal.connected()) gcal.deleteEvent(t.gcalCalendarId || 'primary', t.gcalEventId).catch(() => {});
+  }
+  if (removed.length) {
+    toast(`${removed.length} tarefa${removed.length > 1 ? 's repetidas removidas' : ' repetida removida'}`, {
+      label: 'Desfazer', fn: () => { before.forEach((t) => store.put('tasks', t)); removed.forEach((t) => store.put('tasks', { ...t, gcalEventId: null })); },
+    });
+  } else if (!silent) toast('Nenhuma tarefa repetida');
+  return removed.length;
+}
+let dedupeChecked = false;
+async function autoDedupe() {
+  if (dedupeChecked || !store.ready('tasks') || !store.ready('meta')) return;
+  dedupeChecked = true;
+  const doc = store.get('meta', 'settings') || { id: 'settings' };
+  const done = doc.migrations || [];
+  if (done.includes('dedupe-1')) return;
+  await store.put('meta', { ...doc, id: 'settings', migrations: [...done, 'dedupe-1'] });
+  await removeDuplicates({ silent: true });
+}
+store.subscribe(autoDedupe);
 store.subscribe(migrateSettings);
 store.subscribe(applyBridgeConfig);
 store.subscribe(render);

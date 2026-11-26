@@ -64,8 +64,8 @@ export async function bulkPut(data) {
 
 export function listen(cols, onChanges) {
   for (const col of cols) {
-    unsubs.push(F.onSnapshot(colRef(col), (snap) => {
-      onChanges(col, snap.docChanges().map((c) => ({ type: c.type, id: c.doc.id, data: c.doc.data() })));
+    unsubs.push(F.onSnapshot(colRef(col), { includeMetadataChanges: true }, (snap) => {
+      onChanges(col, snap.docChanges().map((c) => ({ type: c.type, id: c.doc.id, data: c.doc.data() })), !snap.metadata.fromCache);
     }, (e) => console.error('Snapshot', col, e)));
   }
 }

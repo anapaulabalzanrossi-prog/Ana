@@ -9,11 +9,14 @@ const listeners = new Set();
 let cloud = null;          // módulo cloud.js quando ativo
 let cloudUser = null;
 let notifyQueued = false;
+const readyCols = new Set();
 
 export const store = {
   user: () => cloudUser,
   cloudAvailable: () => !!FIREBASE_CONFIG,
   isCloud: () => !!(cloud && cloudUser),
+  /** true quando a coleção já veio completa (do servidor, se logada) */
+  ready: (col) => readyCols.has(col),
   all: (col) => [...state[col].values()],
   get: (col, id) => state[col].get(id),
   subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
@@ -86,10 +89,12 @@ const idbAll = (col) => tx(col, 'readonly', (s) => s.getAll());
 const idbClear = (col) => tx(col, 'readwrite', (s) => s.clear());
 
 async function loadLocal() {
+  readyCols.clear();
   for (const c of COLLECTIONS) {
     state[c].clear();
     try { for (const d of await idbAll(c)) state[c].set(d.id, d); } catch (e) { console.warn('IndexedDB indisponível', e); }
   }
+  if (!FIREBASE_CONFIG) COLLECTIONS.forEach((c) => readyCols.add(c));
   notify();
 }
 
@@ -110,7 +115,9 @@ export async function initStore(onAuthChange) {
             for (const c of COLLECTIONS) await idbClear(c);
           }
           for (const c of COLLECTIONS) state[c].clear();
-          cloud.listen(COLLECTIONS, (col, changes) => {
+          readyCols.clear();
+          cloud.listen(COLLECTIONS, (col, changes, fromServer) => {
+            if (fromServer) readyCols.add(col);
             for (const ch of changes) {
               if (ch.type === 'removed') state[col].delete(ch.id); else state[col].set(ch.id, ch.data);
             }
