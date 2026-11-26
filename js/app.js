@@ -863,7 +863,7 @@ function openPasteList() {
   let area = ui.qa.area;
   const sh = openSheet({
     title: 'Colar várias tarefas',
-    body: `<div class="note">Uma tarefa por linha. Depois do nome, separe com barras, nesta ordem (todas opcionais):<br><b>Tarefa | Status | Cliente | Tipo | Data</b><br>Ex.: <b>Agravo | Fazer petição | Cristiano | Petição | 05/12</b><br>Se a tarefa já existir com o mesmo nome, ela é <b>atualizada</b> em vez de repetida.</div>
+    body: `<div class="note">Uma tarefa por linha. Depois do nome, separe com barras, nesta ordem (todas opcionais):<br><b>Tarefa | Status | Cliente | Tipo | Data | Processo | Etapas | Anotações</b><br>Ex.: <b>Agravo | Fazer petição | Cristiano | Petição | 05/12! | 5009584-35.2026</b><br>Na data, "!" marca prazo fatal e dá para incluir horário (01/12 13:00). Etapas são separadas por ponto e vírgula.<br>Se a tarefa já existir com o mesmo nome, ela é <b>atualizada</b> em vez de repetida.</div>
       <div class="seg area-pick" style="align-self:flex-start">
         <button type="button" class="${area === 'trabalho' ? 'on' : ''}" data-v="trabalho">Trabalho</button>
         <button type="button" class="${area === 'pessoal' ? 'on' : ''}" data-v="pessoal">Pessoal</button>
@@ -872,8 +872,12 @@ function openPasteList() {
       <div class="note" id="pl-count"></div>`,
     foot: `<span class="grow"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pl-save">Adicionar</button>`,
   });
+  const parseTime = (v) => {
+    const m = (v || '').match(/(?:^|\s)(\d{1,2})(?::(\d{2})|h(\d{2})?)(?:\s|!|$)/);
+    return m ? `${pad(Math.min(23, +m[1]))}:${pad(+(m[2] || m[3] || 0))}` : null;
+  };
   const parseDate = (v) => {
-    const m = (v || '').match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+    const m = (v || '').match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
     if (!m) return null;
     const now = new Date();
     let y = m[3] ? Number(m[3].length === 2 ? '20' + m[3] : m[3]) : now.getFullYear();
@@ -884,10 +888,16 @@ function openPasteList() {
   const parse = () => sh.$('#pl-text').value.split(/\r?\n/)
     .map((l) => l.replace(/^\s*(?:[-•*▪◦]|\d+[.)]|\[\s?\])\s*/, '').trim()).filter(Boolean)
     .map((l) => {
-      const [title, st, client, type, date] = l.split('|').map((x) => x.trim());
+      const [title, st, client, type, date, process, steps, notes] = l.split('|').map((x) => x.trim());
       const found = st && s.statuses.find((x) => x.name.toLowerCase() === st.toLowerCase());
       const ty = type && s.types.find((x) => x.toLowerCase() === type.toLowerCase());
-      return { title, status: found ? found.name : (st || ''), client: client || '', type: ty || type || '', date: parseDate(date) };
+      const d = parseDate(date);
+      return {
+        title, status: found ? found.name : (st || ''), client: client || '', type: ty || type || '',
+        date: d, time: d ? parseTime(date.replace(/\d{1,2}\/\d{1,2}(\/\d{2,4})?/, ' ')) : null, fatal: (date || '').includes('!'),
+        process: process || '', notes: notes || '',
+        checklist: (steps || '').split(';').map((x) => x.trim()).filter(Boolean).map((t) => ({ t, done: false })),
+      };
     }).filter((x) => x.title);
   const existing = () => {
     const m = new Map();
@@ -916,12 +926,17 @@ function openPasteList() {
         if (it.status) t.status = it.status;
         if (it.client) t.client = it.client;
         if (it.type) t.type = it.type;
-        if (it.date && it.date !== cur.date) { t.date = it.date; if (!(t.reminders || []).length) t.reminders = defaultReminders(t); }
+        if (it.process) t.process = it.process;
+        if (it.notes) t.notes = it.notes;
+        if (it.checklist.length) t.checklist = it.checklist;
+        if (it.fatal) t.fatal = true;
+        if (it.time) t.time = it.time;
+        if (it.date) { t.date = it.date; if (!(t.reminders || []).length || it.fatal) t.reminders = defaultReminders(t); }
         await store.put('tasks', t);
-        if (t.date !== cur.date) syncTaskToCalendar(t);
+        if (t.date) syncTaskToCalendar(t);
         updated++;
       } else {
-        const t = newTask({ title: it.title, area, status: it.status || (area === 'trabalho' ? s.statuses[0].name : ''), client: it.client, type: it.type, date: it.date });
+        const t = newTask({ title: it.title, area, status: it.status || (area === 'trabalho' ? s.statuses[0].name : ''), client: it.client, type: it.type, date: it.date, time: it.date ? it.time : null, fatal: it.fatal, process: it.process, notes: it.notes, checklist: it.checklist });
         t.createdAt = base + i;
         await store.put('tasks', t);
         if (t.date) syncTaskToCalendar(t);
