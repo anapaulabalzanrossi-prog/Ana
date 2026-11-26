@@ -1115,10 +1115,11 @@ function openWish(id) {
 }
 
 // ---------------- Ajustes ----------------
-function openSettings() {
+function openSettings(fresh = false) {
   const s = settings();
   const user = store.user();
   let cals = []; try { cals = JSON.parse(localStorage.getItem('gcal-cals') || '[]'); } catch { /* */ }
+  const calsBefore = JSON.stringify(cals);
   const show = s.gcalShow || cals.filter((c) => c.selected).map((c) => c.id);
   const statuses = s.statuses.map((x) => ({ ...x }));
 
@@ -1133,7 +1134,7 @@ function openSettings() {
   if (!gcal.configured()) cal = `<div class="toggle-row"><div><div class="t">Google Agenda</div><div class="d">Configure uma única vez e ela fica conectada para sempre, em todos os aparelhos</div></div><button class="btn small primary" id="s-gcal">Ligar</button></div>`;
   else cal = `<div class="toggle-row"><div><div class="t">Google Agenda conectada</div><div class="d">Fica conectada sempre. Escolha quais agendas aparecem no app</div></div><button class="btn small" id="s-gcal-off">Desligar</button></div>
       ${cals.map((c) => `<label class="toggle-row" style="padding:4px 0"><span style="display:flex;gap:8px;align-items:center"><span class="dot" style="width:10px;height:10px;border-radius:50%;background:${c.color}"></span>${esc(c.name)}</span><span class="switch"><input type="checkbox" data-cal-show="${esc(c.id)}" ${show.includes(c.id) ? 'checked' : ''}><span></span></span></label>`).join('')}
-      <div class="field"><label>Agenda para lembretes das tarefas</label><select class="select" id="s-target">${cals.filter((c) => c.writable).map((c) => `<option value="${esc(c.id)}" ${(c.id === s.gcalTarget || (s.gcalTarget === 'primary' && c.primary)) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>`;
+      <div class="field"><label>Agenda para lembretes das tarefas</label><div class="note">Escolha uma agenda só sua. A agenda principal pode estar compartilhada com colegas. Para criar uma nova, use a Google Agenda (no computador: "Outras agendas" → "+" → "Criar nova agenda") e depois volte aqui.</div><select class="select" id="s-target">${cals.filter((c) => c.writable).map((c) => `<option value="${esc(c.id)}" ${(c.id === s.gcalTarget || (s.gcalTarget === 'primary' && c.primary)) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>`;
 
   const sh = openSheet({
     title: 'Ajustes',
@@ -1185,12 +1186,45 @@ function openSettings() {
     };
     const showEls = sh.$$('[data-cal-show]');
     if (showEls.length) patch.gcalShow = showEls.filter((x) => x.checked).map((x) => x.dataset.calShow);
+    const oldTarget = s.gcalTarget;
     if (sh.$('#s-target')) patch.gcalTarget = sh.$('#s-target').value;
     await saveSettings(patch);
     inflight.clear();
     sh.close();
     toast('Ajustes salvos');
+    if (patch.gcalTarget && patch.gcalTarget !== oldTarget) moveTaskEvents(patch.gcalTarget);
   };
+  // Atualiza a lista de agendas (por exemplo, uma agenda recém-criada)
+  if (!fresh && gcal.configured()) {
+    refreshCalendars().then(() => {
+      const now = localStorage.getItem('gcal-cals') || '[]';
+      if (now !== calsBefore && document.contains(sh.el)) { sh.close(); openSettings(true); }
+    });
+  }
+}
+
+/** Move os eventos das tarefas para a agenda escolhida (apaga na antiga e recria na nova) */
+async function moveTaskEvents(target) {
+  const list = tasks().filter((t) => t.gcalEventId && t.gcalCalendarId !== target);
+  if (!list.length) return;
+  toast(`Movendo ${list.length} lembrete${list.length > 1 ? 's' : ''} para a nova agenda…`);
+  let ok = 0;
+  for (const t of list) {
+    try {
+      await gcal.deleteEvent(t.gcalCalendarId || 'primary', t.gcalEventId);
+      const nt = { ...store.get('tasks', t.id), gcalEventId: null, gcalCalendarId: null };
+      await store.put('tasks', nt);
+      if (!nt.done) await syncTaskToCalendar(nt);
+      ok++;
+    } catch (e) {
+      console.error(e);
+      const cur = store.get('tasks', t.id);
+      if (cur) await store.put('tasks', { ...cur, gcalPending: true });
+    }
+  }
+  inflight.clear();
+  render();
+  toast(ok === list.length ? `${ok} lembrete${ok > 1 ? 's movidos' : ' movido'} para a nova agenda` : `${ok} de ${list.length} movidos. Os demais serão tentados de novo depois.`);
 }
 
 // Configuração única do conector da Google Agenda
@@ -1544,7 +1578,7 @@ initStore(() => render()).then(() => {
 // Atualiza a tela quando o dia vira ou o app volta ao primeiro plano
 let lastDay = todayStr();
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { if (todayStr() !== lastDay) { lastDay = todayStr(); ui.cursor = new Date(); } inflight.clear(); render(); syncPendingToCalendar(); }
+  if (document.visibilityState === 'visible') { if (todayStr() !== lastDay) { lastDay = todayStr(); ui.cursor = new Date(); } inflight.clear(); render(); syncPendingToCalendar(); if (gcal.configured()) refreshCalendars(); }
 });
 setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render(); } }, 60000);
 
