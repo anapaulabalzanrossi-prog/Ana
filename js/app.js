@@ -138,7 +138,11 @@ let syncingPending = false;
 async function syncPendingToCalendar() {
   if (!gcal.connected() || syncingPending || !navigator.onLine) return;
   syncingPending = true;
-  try { for (const t of tasks().filter((x) => x.gcalPending)) await syncTaskToCalendar(t); } finally { syncingPending = false; }
+  // Pendentes e também tarefas com data e lembrete que ainda não têm evento
+  // (por exemplo, criadas antes de ligar a agenda)
+  const today = todayStr();
+  const todo = tasks().filter((x) => x.gcalPending || (!x.done && x.date && x.date >= today && (x.reminders || []).length && !x.gcalEventId));
+  try { for (const t of todo) await syncTaskToCalendar(store.get('tasks', t.id) || t); } finally { syncingPending = false; }
 }
 
 async function toggleTask(id) {
